@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  labels:
+    app: quickhit-frontend
+spec:
+  replicas: 3  # Adjust based on traffic needs
+  selector:
+    matchLabels:
+      app: quickhit-frontend
+  template:
+    metadata:
+      labels:
+        app: quickhit-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: actual-dockerhub-username/quickhit-frontend:latest # Ensure this image is pushed and available in the Docker registry
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "250m"
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: API_BASE_URL
+          value: "http://quickhit-backend-service:3000" # Confirm this matches the backend service name
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: frontend-logs
+          mountPath: /var/log/frontend
+      volumes:
+      - name: frontend-logs
+        emptyDir: {}
+      restartPolicy: Always
+      nodeSelector:
+        role: frontend
+      tolerations:
+      - key: "workload-type"
+        operator: "Equal"
+        value: "frontend"
+        effect: "NoSchedule"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/frontend
+                operator: In
+                values:
+                - "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  labels:
+    app: quickhit-frontend
+spec:
+  type: LoadBalancer
+  selector:
+    app: quickhit-frontend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      targetAverageUtilization: 70

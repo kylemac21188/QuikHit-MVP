@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  backend:
+    image: your-dockerhub-username/quickhit-backend:latest
+    container_name: quickhit-backend
+    restart: always
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      MONGO_URI: mongodb://database:27017/quickhit
+      JWT_SECRET: your-secret-key
+      API_BASE_URL: http://localhost:3000/api
+    depends_on:
+      - database
+    networks:
+      - quickhit-network
+    volumes:
+      - backend-logs:/var/log/backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    image: your-dockerhub-username/quickhit-frontend:latest
+    container_name: quickhit-frontend
+    restart: always
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    environment:
+      NODE_ENV: production
+      API_BASE_URL: http://localhost:3000/api
+    depends_on:
+      - backend
+    networks:
+      - quickhit-network
+    volumes:
+      - frontend-logs:/var/log/frontend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  database:
+    image: mongo:5.0
+    container_name: quickhit-database
+    restart: always
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - quickhit-network
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.stats()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:latest
+    container_name: quickhit-nginx
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx:/etc/nginx/conf.d
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - quickhit-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - quickhit-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    networks:
+      - quickhit-network
+
+  mongo-express:
+    image: mongo-express:latest
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_SERVER: database
+    depends_on:
+      - database
+    networks:
+      - quickhit-network
+
+volumes:
+  mongo-data:
+  backend-logs:
+    driver: local
+  frontend-logs:
+    driver: local
+
+networks:
+  quickhit-network:
+    driver: bridge

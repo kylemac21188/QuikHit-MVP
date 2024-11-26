@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+  labels:
+    app: quickhit-backend
+spec:
+  replicas: 3  # Adjust based on your scaling needs
+  selector:
+    matchLabels:
+      app: quickhit-backend
+  template:
+    metadata:
+      labels:
+        app: quickhit-backend
+    spec:
+      containers:
+      - name: backend
+        image: your-dockerhub-username/quickhit-backend:latest # Update with your Docker image
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: API_BASE_URL
+          value: "http://quickhit-backend-service:3000"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: backend-secrets
+              key: jwtSecret
+        - name: MONGO_URI
+          valueFrom:
+            secretKeyRef:
+              name: backend-secrets
+              key: mongoUri
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "250m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: backend-logs
+          mountPath: /var/log/backend
+      volumes:
+      - name: backend-logs
+        emptyDir: {}
+      restartPolicy: Always
+      nodeSelector:
+        role: backend
+      tolerations:
+      - key: "workload-type"
+        operator: "Equal"
+        value: "backend"
+        effect: "NoSchedule"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/backend
+                operator: In
+                values:
+                - "true"
+                ---
+                apiVersion: autoscaling/v2
+                kind: HorizontalPodAutoscaler
+                metadata:
+                  name: backend-hpa
+                spec:
+                  scaleTargetRef:
+                    apiVersion: apps/v1
+                    kind: Deployment
+                    name: backend-deployment
+                  minReplicas: 3
+                  maxReplicas: 10
+                  metrics:
+                  - type: Resource
+                    resource:
+                      name: cpu
+                      targetAverageUtilization: 80
