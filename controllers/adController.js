@@ -1,4 +1,183 @@
 import express from 'express';
+// Create job queues
+const auctionQueue = new Bull('auctionQueue', { redis: { host: '127.0.0.1', port: 6379 } });
+const optimizeQueue = new Bull('optimizeQueue', { redis: { host: '127.0.0.1', port: 6379 } });
+const fraudQueue = new Bull('fraudQueue', { redis: { host: '127.0.0.1', port: 6379 } });
+const blockchainQueue = new Bull('blockchainQueue', { redis: { host: '127.0.0.1', port: 6379 } });
+const arvrQueue = new Bull('arvrQueue', { redis: { host: '127.0.0.1', port: 6379 } });
+
+// Process job queues
+auctionQueue.process(async (job) => {
+    const { adSlotId, minimumBid } = job.data;
+    return await runStandardAuction({ adSlotId, minimumBid });
+});
+
+optimizeQueue.process(async (job) => {
+    const { viewerId, adSlotId } = job.data;
+    return await predictiveAnalytics.optimizeAd({ viewerId, adSlotId });
+});
+
+fraudQueue.process(async (job) => {
+    const { transactionData } = job.data;
+    return await mlFraudDetection.detectFraud(transactionData);
+});
+
+blockchainQueue.process(async (job) => {
+    const { transactionId } = job.data;
+    return await blockchain.trackTransaction(transactionId);
+});
+
+arvrQueue.process(async (job) => {
+    const { adContent, platform } = job.data;
+    return await aiSegmentation.createARVRContent({ adContent, platform });
+});
+
+// Routes with job queues
+router.post('/ads/auctions', [
+    body('adSlotId').notEmpty().withMessage('Ad Slot ID is required'),
+    body('minimumBid').isNumeric().withMessage('Minimum bid must be a number'),
+], validate, async (req, res) => {
+    try {
+        const { adSlotId, minimumBid } = req.body;
+        const job = await auctionQueue.add({ adSlotId, minimumBid });
+        res.json({ success: true, jobId: job.id, message: 'Auction job created successfully' });
+    } catch (error) {
+        logger.error('Error creating auction job:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+router.post('/ads/optimize', [
+    body('viewerId').notEmpty().withMessage('Viewer ID is required'),
+    body('adSlotId').notEmpty().withMessage('Ad Slot ID is required'),
+], validate, async (req, res) => {
+    try {
+        const { viewerId, adSlotId } = req.body;
+        const job = await optimizeQueue.add({ viewerId, adSlotId });
+        res.json({ success: true, jobId: job.id, message: 'Optimization job created successfully' });
+    } catch (error) {
+        logger.error('Error creating optimization job:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+router.post('/ads/fraud/detect', [
+    body('transactionData').notEmpty().withMessage('Transaction data is required'),
+], validate, async (req, res) => {
+    try {
+        const { transactionData } = req.body;
+        const job = await fraudQueue.add({ transactionData });
+        res.json({ success: true, jobId: job.id, message: 'Fraud detection job created successfully' });
+    } catch (error) {
+        logger.error('Error creating fraud detection job:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+router.post('/ads/blockchain/track', [
+    body('transactionId').notEmpty().withMessage('Transaction ID is required'),
+], validate, async (req, res) => {
+    try {
+        const { transactionId } = req.body;
+        const job = await blockchainQueue.add({ transactionId });
+        res.json({ success: true, jobId: job.id, message: 'Blockchain tracking job created successfully' });
+    } catch (error) {
+        logger.error('Error creating blockchain tracking job:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+router.post('/ads/arvr/upload', [
+    body('adContent').notEmpty().withMessage('Ad content is required'),
+    body('platform').notEmpty().withMessage('Platform is required'),
+], validate, async (req, res) => {
+    try {
+        const { adContent, platform } = req.body;
+        const job = await arvrQueue.add({ adContent, platform });
+        res.json({ success: true, jobId: job.id, message: 'AR/VR upload job created successfully' });
+    } catch (error) {
+        logger.error('Error creating AR/VR upload job:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+const jwtOptions = {
+    jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+    secretOrKey: process.env.JWT_SECRET,
+};
+
+passport.use(new JwtStrategy(jwtOptions, (jwtPayload, done) => {
+    User.findById(jwtPayload.sub, (err, user) => {
+        if (err) {
+            return done(err, false);
+        }
+        if (user) {
+            return done(null, user);
+        } else {
+            return done(null, false);
+        }
+    });
+}));
+
+const authenticateJwt = passport.authenticate('jwt', { session: false });
+
+router.use(passport.initialize());
+
+// Protect sensitive routes with OAuth2 and JWT
+router.post('/ads/auctions', passport.authenticate('oauth2'), authenticateJwt, [
+    validateAdSlotId,
+    validateMinimumBid,
+], validate, async (req, res) => {
+    // Route logic
+});
+
+router.post('/ads/optimize', passport.authenticate('oauth2'), authenticateJwt, [
+    validateViewerId,
+    validateAdSlotId,
+], validate, async (req, res) => {
+    // Route logic
+});
+
+router.post('/ads/fraud/detect', passport.authenticate('oauth2'), authenticateJwt, [
+    validateTransactionData,
+], validate, async (req, res) => {
+    // Route logic
+});
+
+router.post('/ads/blockchain/track', passport.authenticate('oauth2'), authenticateJwt, [
+    validateTransactionId,
+], validate, async (req, res) => {
+    // Route logic
+});
+
+router.post('/ads/arvr/upload', passport.authenticate('oauth2'), authenticateJwt, [
+    validateAdContent,
+    validatePlatform,
+], validate, async (req, res) => {
+    // Route logic
+});
+// Reusable validation middleware
+const validateAdSlotId = body('adSlotId').notEmpty().withMessage('Ad Slot ID is required');
+const validateMinimumBid = body('minimumBid').isNumeric().withMessage('Minimum bid must be a number');
+const validateViewerId = query('viewerId').notEmpty().withMessage('Viewer ID is required');
+const validateMessage = body('message').notEmpty().withMessage('Message is required');
+const validateUserId = body('userId').notEmpty().withMessage('User ID is required');
+const validateTransactionData = body('transactionData').notEmpty().withMessage('Transaction data is required');
+const validateTransactionId = body('transactionId').notEmpty().withMessage('Transaction ID is required');
+const validateAdContent = body('adContent').notEmpty().withMessage('Ad content is required');
+const validatePlatform = body('platform').notEmpty().withMessage('Platform is required');
+const validatePoints = body('points').isNumeric().withMessage('Points must be a number');
+const validateContext = body('context').notEmpty().withMessage('Context is required');
+const validatePerformanceData = body('performanceData').notEmpty().withMessage('Performance data is required');
+const validateCampaignId = body('campaignId').notEmpty().withMessage('Campaign ID is required');
+const validateCollaborators = body('collaborators').isArray().withMessage('Collaborators must be an array');
+const validateChanges = body('changes').notEmpty().withMessage('Changes are required');
+const validateComments = body('comments').isArray().withMessage('Comments must be an array');
+const validateCampaignData = body('campaignData').notEmpty().withMessage('Campaign data is required');
+const validateDemandData = body('demandData').notEmpty().withMessage('Demand data is required');
+const validateChatMessages = body('chatMessages').isArray().withMessage('Chat messages must be an array');
+const validateLanguage = body('language').optional().isString().withMessage('Language must be a string if provided');
+const validateCategory = query('category').notEmpty().withMessage('Category is required');
+const validateBehaviorData = body('behaviorData').notEmpty().withMessage('Behavior data is required');
 import { body, query, validationResult } from 'express-validator';
 import notifications from '../utils/notifications';
 import logger from '../utils/logger';
@@ -13,6 +192,9 @@ import redisClient from '../utils/redisClient';
 import promClient from 'prom-client';
 import passport from 'passport';
 import { Strategy as OAuth2Strategy } from 'passport-oauth2';
+import jwt from 'jsonwebtoken';
+import { ExtractJwt, Strategy as JwtStrategy } from 'passport-jwt';
+import Bull from 'bull';
 
 const router = express.Router();
 

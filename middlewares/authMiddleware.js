@@ -8,6 +8,8 @@ const promClient = require('prom-client');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { createCipheriv, createDecipheriv, generateKeyPairSync } = require('crypto');
+const twitchIntegration = require('./TwitchIntegration');
+const aiMiddleware = require('./aiMiddleware');
 
 // RSA key pair generation for JWT
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
@@ -60,20 +62,77 @@ const jwtOptions = {
     algorithm: 'RS256'
 };
 
-// Helper to encrypt and decrypt sensitive data
-const encryptData = (data) => {
-    const cipher = createCipheriv('aes-256-cbc', process.env.ENCRYPTION_KEY, process.env.ENCRYPTION_IV);
-    let encrypted = cipher.update(data, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return encrypted;
+// Middleware for verifying Twitch token
+const verifyTwitchToken = async (req, res, next) => {
+    try {
+        const token = req.headers['authorization'];
+        if (!token) {
+            return res.status(401).json({ message: i18n.__('Token is required') });
+        }
+        const isValid = await twitchIntegration.validateTwitchTokens(token);
+        if (!isValid) {
+            return res.status(401).json({ message: i18n.__('Invalid Twitch token') });
+        }
+        next();
+    } catch (error) {
+        Sentry.captureException(error);
+        return res.status(500).json({ message: i18n.__('Server error') });
+    }
 };
 
-// Rate limiter for login attempts
-const loginRateLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // limit each IP to 100 requests per windowMs
-    message: i18n.__('Too many login attempts, please try again later.')
+// Middleware for dynamic role-based authorization using AI
+const dynamicAuthorization = async (req, res, next) => {
+    try {
+        const recommendedRoles = await aiMiddleware.recommendRoles(req.user.id);
+        if (!recommendedRoles.includes(req.user.role)) {
+            return res.status(403).json({ message: i18n.__('Access denied: role mismatch') });
+        }
+        next();
+    } catch (error) {
+        Sentry.captureException(error);
+        return res.status(500).json({ message: i18n.__('Server error') });
+    }
+};
+
+// Prometheus metrics for advanced tracking
+const tokenRefreshLatency = new promClient.Histogram({
+    name: 'token_refresh_latency_seconds',
+    help: 'Latency of token refresh in seconds',
+    labelNames: ['status']
 });
+const secondaryAuthCounter = new promClient.Counter({
+    name: 'secondary_auth_total',
+    help: 'Total secondary factor authentication attempts',
+    labelNames: ['status']
+});
+const apiMetrics = new promClient.Counter({
+    name: 'api_requests_total',
+    help: 'Total API requests',
+    labelNames: ['endpoint', 'method', 'status']
+});
+
+// Middleware for tracking API metrics
+const trackApiMetrics = (req, res, next) => {
+    res.on('finish', () => {
+        apiMetrics.inc({ endpoint: req.path, method: req.method, status: res.statusCode });
+    });
+    next();
+};
+
+// Middleware for tracking token refresh latency
+const trackTokenRefreshLatency = async (req, res, next) => {
+    const end = tokenRefreshLatency.startTimer();
+    await refreshToken(req, res);
+    end({ status: res.statusCode });
+};
+
+// Middleware for tracking secondary factor authentication
+const trackSecondaryAuth = async (req, res, next) => {
+    res.on('finish', () => {
+        secondaryAuthCounter.inc({ status: res.statusCode });
+    });
+    await secondaryFactorAuth(req, res, next);
+};
 
 // Middleware for authentication
 const authenticate = async (req, res, next) => {
@@ -176,15 +235,6 @@ const errorHandler = (err, req, res, next) => {
     res.status(500).json({ message: i18n.__('An unexpected error occurred'), eventId: Sentry.getCurrentHub().lastEventId() });
 };
 
-module.exports = {
-    authenticate,
-    authorize,
-    refreshToken,
-    logout,
-    detectFraud,
-    errorHandler,
-    loginRateLimiter
-};
 // Middleware for secondary factor authentication (e.g., OTP)
 const secondaryFactorAuth = async (req, res, next) => {
     const { otp } = req.body;
@@ -252,6 +302,20 @@ const enrichedLogging = (req, res, next) => {
     next();
 };
 
+// Middleware for verifying Twitch token with fallback
+const verifyTwitchTokenWithFallback = async (req, res, next) => {
+    try {
+        await verifyTwitchToken(req, res, next);
+    } catch (error) {
+        if (error.status === 401) {
+            await twitchIntegration.refreshTwitchTokens(req.user.id);
+            await verifyTwitchToken(req, res, next);
+        } else {
+            throw error;
+        }
+    }
+};
+
 module.exports = {
     authenticate,
     authorize,
@@ -264,5 +328,213 @@ module.exports = {
     issueScopedToken,
     aiAnomalyInsights,
     enforceZeroTrust,
-    enrichedLogging
+    enrichedLogging,
+    verifyTwitchToken,
+    dynamicAuthorization,
+    trackApiMetrics,
+    trackTokenRefreshLatency,
+    trackSecondaryAuth,
+    verifyTwitchTokenWithFallback
+};
+// Middleware for real-time anomaly notifications via WebSockets
+const aiAnomalyInsightsWithWebSocket = async (req, res, next) => {
+    try {
+        const insights = await classifyAnomalies(req.user.id, req.ip);
+        if (insights) {
+            const ws = new WebSocket('ws://monitoring-dashboard-url');
+            ws.on('open', () => {
+                ws.send(JSON.stringify({ userId: req.user.id, insights }));
+            });
+            alertAdmin(`Anomaly insights for user ${req.user.id}: ${insights}`);
+            return res.status(403).json({ message: i18n.__('Anomaly detected'), insights });
+        }
+        next();
+    } catch (error) {
+        Sentry.captureException(error);
+        return res.status(500).json({ message: i18n.__('Server error') });
+    }
+};
+
+// Middleware for token rotation
+const tokenRotation = async (req, res, next) => {
+    try {
+        const newToken = jwt.sign({ id: req.user.id, roles: req.user.roles }, privateKey, jwtOptions);
+        res.setHeader('Authorization', `Bearer ${newToken}`);
+        next();
+    } catch (error) {
+        Sentry.captureException(error);
+        return res.status(500).json({ message: i18n.__('Server error') });
+    }
+};
+
+// Rate limiter for sensitive endpoints
+const sensitiveRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // limit each IP to 10 requests per windowMs
+    message: i18n.__('Too many requests, please try again later.')
+});
+
+// Enhanced structured logging for audit trails
+const structuredLogging = (req, res, next) => {
+    const traceId = crypto.randomBytes(16).toString('hex');
+    req.traceId = traceId;
+    console.log(JSON.stringify({
+        traceId,
+        method: req.method,
+        url: req.url,
+        userId: req.user ? req.user.id : null,
+        timestamp: new Date().toISOString()
+    }));
+    next();
+};
+
+// Batch Twitch token validation
+const batchValidateTwitchTokens = async (req, res, next) => {
+    try {
+        const tokens = req.body.tokens; // Assume tokens are sent in the request body
+        const validationResults = await twitchIntegration.batchValidateTwitchTokens(tokens);
+        if (validationResults.some(result => !result.isValid)) {
+            return res.status(401).json({ message: i18n.__('One or more Twitch tokens are invalid') });
+        }
+        next();
+    } catch (error) {
+        Sentry.captureException(error);
+        return res.status(500).json({ message: i18n.__('Server error') });
+    }
+};
+
+module.exports = {
+    authenticate,
+    authorize,
+    refreshToken,
+    logout,
+    detectFraud,
+    errorHandler,
+    loginRateLimiter,
+    secondaryFactorAuth,
+    issueScopedToken,
+    aiAnomalyInsights,
+    enforceZeroTrust,
+    enrichedLogging,
+    verifyTwitchToken,
+    dynamicAuthorization,
+    trackApiMetrics,
+    trackTokenRefreshLatency,
+    trackSecondaryAuth,
+    verifyTwitchTokenWithFallback,
+    aiAnomalyInsightsWithWebSocket,
+    tokenRotation,
+    sensitiveRateLimiter,
+    structuredLogging,
+    batchValidateTwitchTokens
+};
+// Middleware for integrating with ELK Stack for real-time logging
+const elkLogging = (req, res, next) => {
+    const logData = {
+        traceId: req.traceId || crypto.randomBytes(16).toString('hex'),
+        method: req.method,
+        url: req.url,
+        userId: req.user ? req.user.id : null,
+        timestamp: new Date().toISOString()
+    };
+    // Assume sendToElk is a function that sends logs to ELK Stack
+    sendToElk(logData);
+    next();
+};
+
+// Middleware for adaptive rate limiting
+const adaptiveRateLimiter = (req, res, next) => {
+    const userRiskProfile = getUserRiskProfile(req.user.id); // Assume getUserRiskProfile fetches the user's risk profile
+    const maxRequests = userRiskProfile === 'high' ? 5 : 100;
+    const rateLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000, // 15 minutes
+        max: maxRequests,
+        message: i18n.__('Too many requests, please try again later.')
+    });
+    rateLimiter(req, res, next);
+};
+
+// Middleware for session management
+const manageSession = async (req, res, next) => {
+    const token = req.headers['authorization'];
+    if (!token) {
+        return res.status(401).json({ message: i18n.__('Token is required') });
+    }
+
+    try {
+        const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
+        const sessionActive = await getAsync(`session_${decoded.id}`);
+        if (!sessionActive) {
+            return res.status(401).json({ message: i18n.__('Session has been revoked') });
+        }
+        // Extend session activity
+        await setAsync(`session_${decoded.id}`, 'active', 'EX', 3600);
+        req.user = decoded;
+        next();
+    } catch (error) {
+        Sentry.captureException(error);
+        return res.status(401).json({ message: i18n.__('Invalid token') });
+    }
+};
+
+// Middleware for audit compliance
+const auditLogging = (req, res, next) => {
+    const auditData = {
+        traceId: req.traceId || crypto.randomBytes(16).toString('hex'),
+        method: req.method,
+        url: req.url,
+        userId: req.user ? req.user.id : null,
+        timestamp: new Date().toISOString(),
+        eventType: 'API_CALL'
+    };
+    // Assume sendToAuditLog is a function that sends logs to an audit log system
+    sendToAuditLog(auditData);
+    next();
+};
+
+// Middleware for AI explainability
+const aiExplainability = async (req, res, next) => {
+    try {
+        const insights = await classifyAnomalies(req.user.id, req.ip);
+        if (insights) {
+            const explanation = generateExplanation(insights); // Assume generateExplanation creates a simplified explanation
+            alertAdmin(`Anomaly insights for user ${req.user.id}: ${explanation}`);
+            return res.status(403).json({ message: i18n.__('Anomaly detected'), explanation });
+        }
+        next();
+    } catch (error) {
+        Sentry.captureException(error);
+        return res.status(500).json({ message: i18n.__('Server error') });
+    }
+};
+
+module.exports = {
+    authenticate,
+    authorize,
+    refreshToken,
+    logout,
+    detectFraud,
+    errorHandler,
+    loginRateLimiter,
+    secondaryFactorAuth,
+    issueScopedToken,
+    aiAnomalyInsights,
+    enforceZeroTrust,
+    enrichedLogging,
+    verifyTwitchToken,
+    dynamicAuthorization,
+    trackApiMetrics,
+    trackTokenRefreshLatency,
+    trackSecondaryAuth,
+    verifyTwitchTokenWithFallback,
+    aiAnomalyInsightsWithWebSocket,
+    tokenRotation,
+    sensitiveRateLimiter,
+    structuredLogging,
+    batchValidateTwitchTokens,
+    elkLogging,
+    adaptiveRateLimiter,
+    manageSession,
+    auditLogging,
+    aiExplainability
 };

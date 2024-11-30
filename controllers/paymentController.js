@@ -1,4 +1,170 @@
 const { processPayment, validatePaymentDetails, generateInvoice, processRefund, fetchTransactionHistory } = require('../services/paymentService');
+const platformFeePercentage = 0.10; // Default platform fee is 10%
+const auctionFeePercentage = 0.05; // Example: 5% auction fee
+
+async function calculatePlatformRevenueAndNetAmount(amount, feePercentage) {
+    const platformRevenue = amount * feePercentage;
+    const netAmount = amount - platformRevenue;
+    return { platformRevenue, netAmount };
+}
+
+async function processAuctionPayment(req, res, next) {
+    try {
+        const { userId, auctionId, paymentMethod } = req.body;
+
+        await aiMiddleware.detectFraud(req, res);
+        await expandFraudDetection(req, res);
+
+        const winningBid = await fetchWinningBid(auctionId);
+        const { platformRevenue, netAmount: amountAfterPlatformFee } = await calculatePlatformRevenueAndNetAmount(winningBid.amount, platformFeePercentage);
+        const { netAmount: finalAmount } = await calculatePlatformRevenueAndNetAmount(amountAfterPlatformFee, auctionFeePercentage);
+
+        const paymentResult = await retryPayment(() =>
+            processPayment(userId, finalAmount, paymentMethod, auctionId, winningBid.merchantId)
+        );
+
+        if (!paymentResult.success) {
+            const suggestions = await getPaymentFailureSuggestions(paymentResult.error);
+            return res.status(400).json({ error: 'Payment failed', details: paymentResult.error, suggestions, code: 'PAYMENT_FAILED' });
+        }
+
+        await recordPlatformRevenue(platformRevenue, paymentResult.id, winningBid.merchantId);
+        capturePaymentAnalytics(paymentResult, winningBid.merchantId);
+        const invoice = generateInvoice(paymentResult);
+        paymentRequestCounter.inc({ status: 'success', paymentMethod });
+        recordTransactionMetrics(paymentResult, winningBid.merchantId);
+
+        await logTransactionOnBlockchain(paymentResult);
+        await notifyUser(userId, 'Auction payment processed successfully', { invoice, paymentId: paymentResult.id });
+        sendWebSocketNotification(userId, { status: 'success', transactionId: paymentResult.id, amount: winningBid.amount });
+
+        res.status(200).json({ message: 'Auction payment processed successfully', invoice, paymentId: paymentResult.id });
+    } catch (error) {
+        Sentry.captureException(error);
+        logger.error(error);
+        paymentRequestCounter.inc({ status: 'error', paymentMethod: req.body.paymentMethod || 'unknown' });
+        res.status(500).json({ error: 'Internal Server Error', code: 'INTERNAL_SERVER_ERROR' });
+    }
+}
+
+module.exports = {
+    processPaymentRequest: [
+        paymentLimiter,
+        validateRequest([
+            body('userId').isString().notEmpty(),
+            body('amount').isFloat({ gt: 0 }),
+            body('currency').isString().notEmpty(),
+            body('paymentMethod').isString().notEmpty(),
+            body('auctionId').optional().isString(),
+            body('merchantId').optional().isString()
+        ]),
+        processPaymentRequest
+    ],
+    processAuctionPayment: [
+        paymentLimiter,
+        validateRequest([
+            body('userId').isString().notEmpty(),
+            body('auctionId').isString().notEmpty(),
+            body('paymentMethod').isString().notEmpty()
+        ]),
+        processAuctionPayment
+    ],
+    refundPayment: refundController.refundPayment,
+    getTransactionDetails: [
+        validateRequest([
+            query('userId').isString().notEmpty(),
+            query('startDate').optional().isISO8601(),
+            query('endDate').optional().isISO8601(),
+            query('page').optional().isInt({ min: 1 }),
+            query('limit').optional().isInt({ min: 1 })
+        ]),
+        getTransactionDetails
+    ],
+    getPaymentMethods: [
+        validateRequest([
+            query('userId').isString().notEmpty()
+        ]),
+        getPaymentMethods
+    ],
+    verifyPaymentStatus: [
+        validateRequest([
+            query('transactionId').isString().notEmpty()
+        ]),
+        verifyPaymentStatus
+    ],
+    exportTransactionHistoryRoute: [
+        validateRequest([
+            query('userId').isString().notEmpty(),
+            query('startDate').optional().isISO8601(),
+            query('endDate').optional().isISO8601(),
+            query('format').isString().notEmpty()
+        ]),
+        exportTransactionHistoryRoute
+    ],
+    disputeTransaction: disputeController.disputeTransaction,
+    handleRecurringSubscriptions: subscriptionController.handleRecurringSubscriptions,
+    handleNFTPayments: [
+        paymentLimiter,
+        validateRequest([
+            body('userId').isString().notEmpty(),
+            body('nftId').isString().notEmpty(),
+            body('paymentMethod').isString().notEmpty(),
+            body('merchantId').optional().isString()
+        ]),
+        handleNFTPayments
+    ],
+    handleMicrotransactions: [
+        paymentLimiter,
+        validateRequest([
+            body('userId').isString().notEmpty(),
+            body('transactions').isArray().notEmpty(),
+            body('merchantId').optional().isString()
+        ]),
+        handleMicrotransactions
+    ],
+    getPredictivePaymentInsights: [
+        validateRequest([
+            query('userId').isString().notEmpty(),
+            query('currency').isString().notEmpty(),
+            query('paymentMethod').isString().notEmpty()
+        ]),
+        getPredictivePaymentInsights
+    ],
+    calculateDynamicFees: [
+        validateRequest([
+            body('userId').isString().notEmpty(),
+            body('amount').isFloat({ gt: 0 }),
+            body('currency').isString().notEmpty()
+        ]),
+        calculateDynamicFees
+    ],
+    handleRevenueShare: [
+        validateRequest([
+            body('transactionId').isString().notEmpty(),
+            body('stakeholders').isArray().notEmpty()
+        ]),
+        handleRevenueShare
+    ],
+    rewardUserAchievements: [
+        validateRequest([
+            body('userId').isString().notEmpty(),
+            body('achievementType').isString().notEmpty()
+        ]),
+        rewardUserAchievements
+    ],
+    getSubscriptionAnalytics: [
+        validateRequest([
+            query('merchantId').isString().notEmpty()
+        ]),
+        getSubscriptionAnalytics
+    ],
+    resolveDisputesAutomatically: [
+        validateRequest([
+            body('disputeId').isString().notEmpty()
+        ]),
+        resolveDisputesAutomatically
+    ]
+};
 const { recordPlatformRevenue, reversePlatformRevenue } = require('../services/revenueService');
 const { capturePaymentAnalytics, recordTransactionMetrics, captureRefundAnalytics } = require('../analytics/paymentAnalytics');
 const { validateCurrencySupport, calculateTransactionFee } = require('../utils/paymentUtils');
@@ -26,6 +192,12 @@ const fs = require('fs');
 const NodeCache = require('node-cache');
 const { Pool } = require('pg');
 const redis = require('redis');
+const { processAdTransaction, processSubscription, processRefund, fetchRevenueBreakdown, fetchTransactionHistory } = require('../services/paymentService');
+const TwitchAPI = require('../services/twitchAPI');
+const PaymentGateway = require('../services/paymentGateway');
+const Blockchain = require('../services/blockchain');
+const AIAnalyticsEngine = require('../services/aiAnalyticsEngine');
+const Joi = require('joi');
 
 // Ensure structured logging and error handling.
 const logger = winston.createLogger({
