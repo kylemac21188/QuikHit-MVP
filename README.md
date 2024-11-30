@@ -76,6 +76,72 @@ Run the server:
 ```sh
 npm start
 ```
+## Main MVP Files
+Below are all the files that make up the QuikHit MVP. Each file has been meticulously coded to provide the necessary functionalities to make the MVP fully functional.
+
+### **Client (Frontend)**
+- **LandingPage.js**: The landing page for users, introducing them to the platform.
+- **Signup.js**: User registration page to onboard new streamers, advertisers, and admins.
+- **Navbar.js**: Navigation bar providing easy access to different sections of the platform.
+- **UserDashboard.js**: The dashboard view for general users, including streamers and advertisers.
+- **BidInterface.js**: Interface that allows advertisers to place bids on available ad slots.
+- **AdvertiserAuctionView.js**: Displays available ad spaces for advertisers to participate in auctions.
+- **StreamerAuctionView.js**: Shows auction results and allows streamers to manage their available ad slots.
+- **PremiumStreamIndicator.js**: Indicates when premium streaming content is available for advertisers.
+- **LiveMetrics.js**: Displays real-time viewer engagement metrics for streamers.
+- **AdCreationForm.js**: Allows advertisers to create new ad campaigns.
+- **AuctionDashboard.js**: Displays auction data for both advertisers and streamers.
+- **NotificationBar.js**: Displays notifications related to account activities and ad campaigns.
+- **Login.js**: Manages user login, authentication, and sessions.
+- **ForgotPassword.js** & **ResetPassword.js**: Allow users to recover their accounts and reset passwords.
+- **CreateCampaign.js**: Interface for advertisers to create new advertising campaigns.
+- **AdManagement.js**: Allows advertisers to manage existing ads and campaigns.
+- **AnalyticsDashboard.js**: Displays insights and analytics related to campaigns and user engagement.
+
+### **Backend (Controllers & Services)**
+- **auctionController.js**: Handles API requests related to auctions, including managing bids and listing available ad slots.
+- **paymentController.js**: Manages payments for ad purchases and the distribution of earnings to streamers.
+- **streamController.js**: Manages live stream interactions, including linking ads to streams.
+- **adController.js**: Handles ad-related operations, including ad creation, management, and updating.
+- **userController.js**: Manages user operations such as registration, login, profile updates, and authentication.
+- **analyticsController.js**: Handles requests to retrieve analytics data for display on the client.
+- **auctionService.js**: Implements the core business logic for managing auctions.
+- **paymentService.js**: Handles payment processing, fee calculation, and transaction management.
+- **adTargetingService.js**: Optimizes ad targeting based on viewer data to enhance ad effectiveness.
+- **streamService.js**: Provides support for real-time stream interactions, analytics, and ad placements.
+- **NotificationService.js**: Manages notifications across the platform for different users.
+
+### **Backend (Core Models)**
+- **User.js**: Defines the data model for user accounts (streamers, advertisers, admins).
+- **ad.js**: Defines the data model for ad campaigns, including ad targeting and media details.
+- **auction.js**: Data model for managing ad auctions, including bid tracking.
+- **payment.js**: Data model for managing payment records and transactions.
+- **paymentModel.js**: Implements the data logic for payment details and handling transactions.
+
+### **Middleware & Utilities**
+- **authMiddleware.js**: Handles user authentication and role-based access control.
+- **rateLimiter.js**: Prevents abuse by limiting the frequency of requests.
+- **apiClient.js**: Utility for abstracting backend API calls for use in the frontend.
+- **blockchainUtils.js**: Provides blockchain-based tracking of ad transactions for transparency.
+- **aiModels.js**: Implements AI models used for ad targeting, fraud detection, and personalization.
+- **WebsocketManager.js**: Manages real-time data updates for the frontend using WebSockets.
+
+### **Integrations & Plugin Support**
+- **twitchIntegration.js**: Handles integration with Twitch's streaming capabilities.
+- **TwitchAPI.js**: Manages interactions with Twitch API for streaming and viewer analytics.
+- **youtubeAPI.js**: Handles integration with YouTube for managing stream metrics and placing ads.
+- **streamOverlayManager.js**: Manages overlays on streams for displaying ads, metrics, and other live information.
+- **obsPlugin.js**: Handles integration with OBS for ad placement and interaction with streaming content.
+
+### **Deployment Files**
+- **docker-compose.yml**: Docker configuration for local setup of the project, including backend and frontend services.
+- **backend-deployment.yaml** & **frontend-deployment.yaml**: Kubernetes deployment files for deploying backend and frontend services.
+- **grafana-deployment.yaml** & **prometheus-deployment.yaml**: Deployment configurations for monitoring tools.
+- **prometheus-deployment.yaml**: Handles Prometheus deployment for metrics collection and monitoring.
+
+### **Auction & Payment System**
+- **biddingEngine.js**: Implements the logic for managing the bidding process for ad slots.
+- **PaymentGatewayIntegration.js**: Integrates external payment providers to handle payment processing securely.
 
 ### Running Locally
 For local development, you can also use Docker:
